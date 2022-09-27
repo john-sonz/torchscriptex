@@ -1,0 +1,7 @@
+%{
+  "complex": {:hex, :complex, "0.4.2", "923e5db0be13dbb3ea00cf8459d9f75f3afdd9ff5a82742ded21064330d28273", [:mix], [], "hexpm", "069a085ef820ce675a2619fd125b963ff4514af2102c7f7d7965128e5ec0a429"},
+  "dll_loader_helper": {:hex, :dll_loader_helper, "0.1.7", "286c3d90efe136767ff8a0792369a5c74d68a73a71cec3d67e2358a920875b1c", [:make, :mix, :rebar3], [], "hexpm", "bd24257e4b54bece5041f11f42ad0eb64c37efe613ed69cd7401a8d2dbd2349c"},
+  "elixir_make": {:hex, :elixir_make, "0.6.3", "bc07d53221216838d79e03a8019d0839786703129599e9619f4ab74c8c096eac", [:mix], [], "hexpm", "f5cbd651c5678bcaabdbb7857658ee106b12509cd976c2c2fca99688e1daf716"},
+  "nx": {:git, "https://github.com/elixir-nx/nx.git", "410161623b501a76f9fbba755e0c81daf766773b", [sparse: "nx", branch: "main"]},
+  "torchx": {:git, "https://github.com/elixir-nx/nx.git", "410161623b501a76f9fbba755e0c81daf766773b", [sparse: "torchx", branch: "main"]},
+}
