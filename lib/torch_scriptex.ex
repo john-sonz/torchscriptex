@@ -7,12 +7,43 @@ defmodule TorchScriptex do
 
   import Nx.Defn
 
+  def inspect_torch(var_or_vars, fun) when is_function(fun, 1) do
+    jit_apply(
+      fn var_or_vars ->
+        var_or_vars |> fun.()
+        |> inspectx()
+      end,
+      [var_or_vars],
+      on_conflict: :reuse
+    )
+  end
+
   defn softmax(t, p, r) do
     ret = Nx.add(t, p)
     |> Nx.subtract(r)
     |> Nx.multiply(2)
     |> Nx.divide(4)
     inspectx(ret)
+  end
+
+  defn slice_test() do
+    t = Nx.tensor([[[1, 2, 3, 4, 5, 6, 7, 8],
+    [10, 11, 12, 13, 14, 15, 16, 17]],
+   [[71, 72, 73, 74, 75, 76, 77, 78],
+    [81, 82, 83, 84, 85, 86, 87, 88]]])
+
+    Nx.slice(t,[2,0,1],[2,1,2],strides: [1,1,2])
+    |> print_expr()
+    |> inspectx()
+
+    #TorchScriptex.inspect_torch({t}, fn {a} -> Nx.slice(a,[2,0,1],[2,1,2],strides: [1,2,3]) end)
+    #Nx.Defn.
+  end
+
+  def tensor_test(a, b, c) do
+    #Nx.LinAlg.cholesky(Nx.tensor([[20.0, 17.6], [17.6, 16.0]]))
+    #TorchScriptex.inspect_torch(Nx.tensor([[20.0, 17.6], [17.6, 16.0]]), fn x -> Nx.LinAlg.cholesky(x) end)
+    TorchScriptex.inspect_torch({a,b,c}, fn {a,b,c} -> Nx.Random.uniform_split(a,b,c) end)
   end
 
   deftransform inspectx(tensor) do
@@ -67,67 +98,135 @@ defmodule TorchScriptex do
     {exprs, params, var_map, cache} = acc
     {var, var_map} = var_for_id(var_map, id)
     param = {"tensor ", var}
-    {t, {exprs, [{param} | params], var_map, cache}}
+    {t, {exprs, [param | params], var_map, cache}}
   end
 
   defp cached_inspect_expr(%T{data: %Expr{id: id, op: op}} = t, acc) do
     {args, {exprs, params, var_map, cache}} = traverse_args(op, t, acc)
     {var, var_map} = var_for_id(var_map, id)
     args_str = inspect_args(op, args, var_map)
-    expr_str = var <> " = " <> pythonize(op, args_str)
+    expr_str = var <> " = " <> pythonize(t, op, args_str)
     {t, {[{expr_str} | exprs], params, var_map, cache}}
   end
 
-  defp pythonize(:add, args_str) do
-    binary_glue("torch.add", args_str)
+  @unary_ops [:exp, :expm1, :log, :log1p, :sigmoid, :cos, :sin, :tan, :cosh, :sinh, :tanh] ++
+      [:acosh, :asinh, :atanh, :sqrt, :rsqrt, :sign, :abs, :bitwise_not] ++
+      [:floor, :ceil, :round] ++
+      [:erf, :erfc, :acos, :asin, :atan, :real, :imag]
+
+  @unary_exs [:negate, :is_nan, :is_infinity, :erf_inv]
+  @unary_exs_replacements %{
+        negate: "neg",
+        is_nan: "isnan",
+        is_infinity: "isinf",
+        erf_inv: "erfinv"
+      }
+
+  @unary_custom [:cbrt, :conjugate, :count_leading_zeros, :bitcast, :population_count]
+
+  @binary_ops [:remainder, :atan2, :max, :min] ++
+      [:bitwise_and, :bitwise_or, :bitwise_xor] ++
+      [:equal, :not_equal, :greater, :less, :less_equal, :greater_equal] ++
+      [:logical_and, :logical_or, :logical_xor] ++
+      [:add, :subtract, :multiply, :divide]
+
+  @binary_exs [:left_shift, :right_shift]
+  @binary_exs_replacements %{
+    left_shift: "bitwise_left_shift",
+    right_shift: "bitwise_right_shift"
+  }
+
+  @binary_custom [:quotient]
+
+  # for op <- unary_ops do
+  #   def unquote(op)(out, tensor) do
+  #     tensor = to_expr(tensor)
+  #     unary_expr(out, tensor.data.context, unquote(op), tensor)
+  #   end
+  # end
+
+  defp pythonize(_t, op, args_str) when op in @unary_ops do
+    "torch." <> Atom.to_string(op) <> "(" <> args_str <> ")"
   end
 
-  defp pythonize(:subtract, args_str) do
-    binary_glue("torch.subtract", args_str)
+  defp pythonize(_t, op, args_str) when op in @unary_exs do
+    "torch." <> Map.get(@unary_exs_replacements, op) <> "(" <> args_str <> ")"
   end
 
-  defp pythonize(:multiply, args_str) do
-    binary_glue("torch.multiply", args_str)
+  defp pythonize(_t, op, args_str) when op in @binary_ops do
+    "torch." <> Atom.to_string(op) <> "(" <> args_str <> ")"
   end
 
-  defp pythonize(:divide, args_str) do
-    binary_glue("torch.divide", args_str)
+  defp pythonize(_t, op, args_str) when op in @binary_exs do
+    "torch." <> Map.get(@binary_exs_replacements, op) <> "(" <> args_str <> ")"
   end
 
-  defp pythonize(op, args_str) do
-    Atom.to_string(op) <> " " <> args_str
+  defp pythonize(t, op, args_str) do
+    args_str = args_str
+    |> String.split(",")
+    pythonize_custom(t, op, args_str)
   end
 
-  defp binary_glue(op, args_str) do
-    op <> "(" <> args_str <> ")"
+  defp pythonize_custom(%T{type: type} = _t, :as_type, [tensor]) do
+    tensor <> ".to(" <> python_type(type) <> ")"
   end
 
+  defp pythonize_custom(%T{shape: shape} = _t, :reshape, [tensor]) do
+    tensor <> ".reshape(" <> tensor <> ", " <> python_list(shape) <> ")"
+  end
 
+  defp pythonize_custom(%T{shape: shape} = _t, :slice, [tensor, start, lengths, strides]) do
+    start = unwrap_list(start)
+    lengths = unwrap_list(lengths)
+    strides = unwrap_list(strides)
+    dim = length(start)
 
+    narrowed =
+      Enum.zip([start, lengths, 0..dim-1])
+      |> Enum.reduce(tensor, fn ({s, l, i}, acc) -> "torch.narrow(#{acc}, #{i}, #{s}, #{l})" end)
 
+    output_shape = python_list(shape)
 
+    if Enum.all?(strides, &(&1 == "1")) do
+      narrowed
+    else
+      strides =
+        Enum.map(lengths, &(String.to_integer(&1)))
+        |> steps_to_strides(Enum.map(strides, &(String.to_integer(&1))))
+        |> python_list()
 
+      "torch.as_strided(#{narrowed}.contiguous(), #{output_shape}, #{strides}, 0)"
+    end
 
+  end
 
+  def steps_to_strides(shape, steps) do
+    for {dim, step} <- Enum.zip(shape, steps) |> Enum.reverse(), reduce: {1, []} do
+      {offset, strides} -> {offset * dim, [offset * step | strides]}
+    end
+    |> elem(1)
+  end
 
+  defp pythonize_custom(_t, :squeeze, [tensor, axes]) do
+    axes = unwrap_list(axes)
 
+    for axis <- axes, reduce: tensor do
+      acc -> "torch.squeeze(#{acc}, #{axis})"
+    end
+  end
 
+  defp pythonize_custom(_t, :concatenate, [tensors, axis]) do
+    tensors =
+      tensors
+      |> unwrap_list()
+      |> wrap_list()
 
+    "torch.cat(#{tensors}, #{axis})"
+  end
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+  defp pythonize_custom(_t, op, args_str) do
+    Atom.to_string(op) <> " " <> Enum.join(args_str, " ")
+  end
 
   defp traverse_args(:while, %T{data: %{args: [initial, _, _, _]}}, acc) do
     {initial, acc} = Composite.traverse(initial, acc, &inspect_expr/2)
@@ -179,8 +278,9 @@ defmodule TorchScriptex do
   defp inspect_args(_op, args, var_map),
     do: inspect_args(args, var_map)
 
+
   defp inspect_args(args, var_map),
-    do: Enum.map_join(args, ", ", &inspect_arg(&1, var_map))
+    do: Enum.map_join(args, ",", &inspect_arg(&1, var_map))
 
   defp inspect_arg(arg, var_map) do
     case arg do
@@ -199,10 +299,10 @@ defmodule TorchScriptex do
             Enum.map_join(arg, ", ", fn {k, v} -> "#{k}: #{inspect(v)}" end)
 
           is_list(arg) ->
-            [?[, inspect_args(arg, var_map), ?]]
+            [?[, inspect_args(arg, var_map) |> String.replace(",", "|"), ?]]
 
           is_tuple(arg) ->
-            [?{, inspect_args(Tuple.to_list(arg), var_map), ?}]
+            [?{, inspect_args(Tuple.to_list(arg), var_map) |> String.replace(",", "&"), ?}]
 
           true ->
             inspect(arg)
@@ -226,4 +326,43 @@ defmodule TorchScriptex do
   end
 
   defp counter_to_name(counter), do: [Enum.at(?a..?z, counter)]
+
+  defp python_type(type) do
+    case Nx.Type.normalize!(type) do
+      {:u, 8} -> "torch.uint8"
+      {:s, 8} -> "torch.int8"
+      {:s, 16} -> "torch.short"
+      {:s, 32} -> "torch.int"
+      {:s, 64} -> "torch.long"
+      {:f, 32} -> "torch.float"
+      {:f, 64} -> "torch.double"
+      {:u, _} -> "torch.long"
+    end
+  end
+
+  defp python_list(tuple) when is_tuple(tuple) do
+    python_list(Tuple.to_list(tuple))
+  end
+
+  defp python_list(list) when is_list(list) do
+    "#{inspect list}"
+  end
+
+  defp unwrap_tuple(tuple) do
+    tuple
+    |> String.trim_leading("(")
+    |> String.trim_trailing(")")
+    |> String.split("&")
+  end
+
+  defp unwrap_list(list) do
+    list
+    |> String.trim_leading("[")
+    |> String.trim_trailing("]")
+    |> String.split("|")
+  end
+
+  defp wrap_list(list) do
+    "[" <> Enum.join(list, ", ") <> "]"
+  end
 end
