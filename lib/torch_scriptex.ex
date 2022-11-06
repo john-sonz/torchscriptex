@@ -10,7 +10,8 @@ defmodule TorchScriptex do
   def inspect_torch(var_or_vars, fun) when is_function(fun, 1) do
     jit_apply(
       fn var_or_vars ->
-        var_or_vars |> fun.()
+        var_or_vars
+        |> fun.()
         |> inspectx()
       end,
       [var_or_vars],
@@ -19,31 +20,34 @@ defmodule TorchScriptex do
   end
 
   defn softmax(t, p, r) do
-    ret = Nx.add(t, p)
-    |> Nx.subtract(r)
-    |> Nx.multiply(2)
-    |> Nx.divide(4)
+    ret =
+      Nx.add(t, p)
+      |> Nx.subtract(r)
+      |> Nx.multiply(2)
+      |> Nx.divide(4)
+
     inspectx(ret)
   end
 
   defn slice_test() do
-    t = Nx.tensor([[[1, 2, 3, 4, 5, 6, 7, 8],
-    [10, 11, 12, 13, 14, 15, 16, 17]],
-   [[71, 72, 73, 74, 75, 76, 77, 78],
-    [81, 82, 83, 84, 85, 86, 87, 88]]])
+    t =
+      Nx.tensor([
+        [[1, 2, 3, 4, 5, 6, 7, 8], [10, 11, 12, 13, 14, 15, 16, 17]],
+        [[71, 72, 73, 74, 75, 76, 77, 78], [81, 82, 83, 84, 85, 86, 87, 88]]
+      ])
 
-    Nx.slice(t,[2,0,1],[2,1,2],strides: [1,1,2])
+    Nx.slice(t, [2, 0, 1], [2, 1, 2], strides: [1, 1, 2])
     |> print_expr()
     |> inspectx()
 
-    #TorchScriptex.inspect_torch({t}, fn {a} -> Nx.slice(a,[2,0,1],[2,1,2],strides: [1,2,3]) end)
-    #Nx.Defn.
+    # TorchScriptex.inspect_torch({t}, fn {a} -> Nx.slice(a,[2,0,1],[2,1,2],strides: [1,2,3]) end)
+    # Nx.Defn.
   end
 
   def tensor_test(a, b, c) do
-    #Nx.LinAlg.cholesky(Nx.tensor([[20.0, 17.6], [17.6, 16.0]]))
-    #TorchScriptex.inspect_torch(Nx.tensor([[20.0, 17.6], [17.6, 16.0]]), fn x -> Nx.LinAlg.cholesky(x) end)
-    TorchScriptex.inspect_torch({a,b,c}, fn {a,b,c} -> Nx.Random.uniform_split(a,b,c) end)
+    # Nx.LinAlg.cholesky(Nx.tensor([[20.0, 17.6], [17.6, 16.0]]))
+    # TorchScriptex.inspect_torch(Nx.tensor([[20.0, 17.6], [17.6, 16.0]]), fn x -> Nx.LinAlg.cholesky(x) end)
+    TorchScriptex.inspect_torch({a, b, c}, fn {a, b, c} -> Nx.Random.uniform_split(a, b, c) end)
   end
 
   deftransform inspectx(tensor) do
@@ -52,17 +56,19 @@ defmodule TorchScriptex do
 
     params = Enum.reverse(params) |> Enum.uniq()
     exprs = Enum.reverse(exprs) |> Enum.uniq()
-    header = Enum.reduce(params, "def forward(self", fn {_, p}, acc ->
-      acc <> ", " <> p
-    end) <> "):"
+
+    header =
+      Enum.reduce(params, "def forward(self", fn {_, p}, acc ->
+        acc <> ", " <> p
+      end) <> "):"
 
     {expr} = List.last(exprs)
     [returned | _] = String.split(expr, " ")
 
-    all = Enum.reduce(exprs, header, fn {expr}, acc ->
-      acc <> "\n\t" <> expr
-    end) <> "\n\treturn " <> returned
-
+    all =
+      Enum.reduce(exprs, header, fn {expr}, acc ->
+        acc <> "\n\t" <> expr
+      end) <> "\n\treturn " <> returned
 
     IO.puts(all)
     tensor
@@ -110,25 +116,25 @@ defmodule TorchScriptex do
   end
 
   @unary_ops [:exp, :expm1, :log, :log1p, :sigmoid, :cos, :sin, :tan, :cosh, :sinh, :tanh] ++
-      [:acosh, :asinh, :atanh, :sqrt, :rsqrt, :sign, :abs, :bitwise_not] ++
-      [:floor, :ceil, :round] ++
-      [:erf, :erfc, :acos, :asin, :atan, :real, :imag]
+               [:acosh, :asinh, :atanh, :sqrt, :rsqrt, :sign, :abs, :bitwise_not] ++
+               [:floor, :ceil, :round] ++
+               [:erf, :erfc, :acos, :asin, :atan, :real, :imag]
 
   @unary_exs [:negate, :is_nan, :is_infinity, :erf_inv]
   @unary_exs_replacements %{
-        negate: "neg",
-        is_nan: "isnan",
-        is_infinity: "isinf",
-        erf_inv: "erfinv"
-      }
+    negate: "neg",
+    is_nan: "isnan",
+    is_infinity: "isinf",
+    erf_inv: "erfinv"
+  }
 
   @unary_custom [:cbrt, :conjugate, :count_leading_zeros, :bitcast, :population_count]
 
   @binary_ops [:remainder, :atan2, :max, :min] ++
-      [:bitwise_and, :bitwise_or, :bitwise_xor] ++
-      [:equal, :not_equal, :greater, :less, :less_equal, :greater_equal] ++
-      [:logical_and, :logical_or, :logical_xor] ++
-      [:add, :subtract, :multiply, :divide]
+                [:bitwise_and, :bitwise_or, :bitwise_xor] ++
+                [:equal, :not_equal, :greater, :less, :less_equal, :greater_equal] ++
+                [:logical_and, :logical_or, :logical_xor] ++
+                [:add, :subtract, :multiply, :divide]
 
   @binary_exs [:left_shift, :right_shift]
   @binary_exs_replacements %{
@@ -162,28 +168,27 @@ defmodule TorchScriptex do
   end
 
   defp pythonize(t, op, args_str) do
-    args_str = args_str
-    |> String.split(",")
-    pythonize_custom(t, op, args_str)
+    args = String.split(args_str, ",")
+    pythonize_custom(t, op, args)
   end
 
-  defp pythonize_custom(%T{type: type} = _t, :as_type, [tensor]) do
+  defp pythonize_custom(%T{type: type}, :as_type, [tensor]) do
     tensor <> ".to(" <> python_type(type) <> ")"
   end
 
-  defp pythonize_custom(%T{shape: shape} = _t, :reshape, [tensor]) do
+  defp pythonize_custom(%T{shape: shape}, :reshape, [tensor]) do
     tensor <> ".reshape(" <> tensor <> ", " <> python_list(shape) <> ")"
   end
 
-  defp pythonize_custom(%T{shape: shape} = _t, :slice, [tensor, start, lengths, strides]) do
+  defp pythonize_custom(%T{shape: shape}, :slice, [tensor, start, lengths, strides]) do
     start = unwrap_list(start)
     lengths = unwrap_list(lengths)
     strides = unwrap_list(strides)
     dim = length(start)
 
     narrowed =
-      Enum.zip([start, lengths, 0..dim-1])
-      |> Enum.reduce(tensor, fn ({s, l, i}, acc) -> "torch.narrow(#{acc}, #{i}, #{s}, #{l})" end)
+      Enum.zip([start, lengths, 0..(dim - 1)])
+      |> Enum.reduce(tensor, fn {s, l, i}, acc -> "torch.narrow(#{acc}, #{i}, #{s}, #{l})" end)
 
     output_shape = python_list(shape)
 
@@ -191,13 +196,12 @@ defmodule TorchScriptex do
       narrowed
     else
       strides =
-        Enum.map(lengths, &(String.to_integer(&1)))
-        |> steps_to_strides(Enum.map(strides, &(String.to_integer(&1))))
+        Enum.map(lengths, &String.to_integer(&1))
+        |> steps_to_strides(Enum.map(strides, &String.to_integer(&1)))
         |> python_list()
 
       "torch.as_strided(#{narrowed}.contiguous(), #{output_shape}, #{strides}, 0)"
     end
-
   end
 
   def steps_to_strides(shape, steps) do
@@ -278,7 +282,6 @@ defmodule TorchScriptex do
   defp inspect_args(_op, args, var_map),
     do: inspect_args(args, var_map)
 
-
   defp inspect_args(args, var_map),
     do: Enum.map_join(args, ",", &inspect_arg(&1, var_map))
 
@@ -345,7 +348,7 @@ defmodule TorchScriptex do
   end
 
   defp python_list(list) when is_list(list) do
-    "#{inspect list}"
+    "#{inspect(list)}"
   end
 
   defp unwrap_tuple(tuple) do
