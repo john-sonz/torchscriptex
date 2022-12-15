@@ -1,4 +1,6 @@
 defmodule TorchScriptex.Generator do
+  alias Nx.Tensor, as: T
+
   @opaque_ops [:exp, :expm1, :log, :log1p, :sigmoid, :cos, :sin, :tan, :cosh, :sinh, :tanh] ++
                 [:acosh, :asinh, :atanh, :sqrt, :rsqrt, :sign, :abs, :bitwise_not] ++
                 [:floor, :ceil, :round] ++
@@ -71,7 +73,7 @@ defmodule TorchScriptex.Generator do
   end
 
   defp to_lines(lines, [{tabs, _, :while, [vars, names]}, condition | tail]) do
-    {_, _, condition_op, condition_args} = condition
+    {_, _, condition_op, condition_args, _} = condition
 
     variables =
       [vars, names]
@@ -92,8 +94,25 @@ defmodule TorchScriptex.Generator do
     |> to_lines(tail)
   end
 
+  defp to_lines(lines, [{tabs, var_name, op, args, out}]) do
+    torch_assignment(var_name, op, args, out)
+    |> indent(tabs + 1)
+    |> then(&[&1 | lines])
+  end
+
+  defp to_lines(lines, [{tabs, var_name, op, args, out} | tail]) do
+    torch_assignment(var_name, op, args, out)
+    |> indent(tabs + 1)
+    |> then(&[&1 | lines])
+    |> to_lines(tail)
+  end
+
   defp torch_assignment(var_name, op, args) do
     "#{var_name} = #{torch_op(op, args)}"
+  end
+
+  defp torch_assignment(var_name, op, args, out) do
+    "#{var_name} = #{torch_op(op, args, out)}"
   end
 
   defp while_header(condition_op, condition_args) do
@@ -114,8 +133,18 @@ defmodule TorchScriptex.Generator do
 
   defp torch_op(:conjugate, [arg]), do: "torch.conj(#{arg}).resolve_conj()"
 
-  defp torch_op(op, _) do
-    raise(ArgumentError, "#{op} Nx operation is unsupported for generating TorchScript code")
+  defp torch_op(:list, args), do: "[#{Enum.join(args, ",")}]"
+
+  defp torch_op(:reshape, [arg], %T{shape: shape}), do: "torch.reshape(#{arg}, #{python_tuple(shape)})"
+
+  defp torch_op(op, args) do
+    "#{op}(#{Enum.join(args,",")}) not supported"
+    #raise(ArgumentError, "#{op} Nx operation is unsupported for generating TorchScript code")
+  end
+
+  defp torch_op(op, args, out) do
+    "#{op}(#{Enum.join(args,",")}) not supported"
+    #raise(ArgumentError, "#{op} Nx operation is unsupported for generating TorchScript code")
   end
 
   # String helpers

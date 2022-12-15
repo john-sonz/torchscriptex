@@ -50,8 +50,6 @@ defmodule TorchScriptex do
   end
 
   def tensor_test(a, b, c) do
-    TorchScriptex.inspect_torch({a}, fn {a} -> Nx.Random.key(a) end)
-
     TorchScriptex.inspect_torch({a, b, c}, fn {a, b, c} ->
       Nx.Random.uniform_split(Nx.Random.key(a), b, c)
     end)
@@ -62,8 +60,11 @@ defmodule TorchScriptex do
   end
 
   deftransform inspectx2(tensor) do
-    {_, {funs, params, consts, _}, _} = inspectt(tensor, {[], %{}, %{}, %{}}, 0)
+    #IO.inspect(tensor, structs: false, limit: :infinity)
+    {_, {funs, params, consts, var_map}, _} = inspectt(tensor, {[], %{}, %{}, %{}}, 0)
 
+    inv_var_map = Map.new(var_map, fn {key, val} -> {val, key} end)
+    IO.inspect(funs)
     code = TorchScriptex.Generator.python(funs, params, consts)
 
     IO.puts(code)
@@ -217,6 +218,53 @@ defmodule TorchScriptex do
   end
 
   defp inspectt(
+         t,
+         {funs, params, consts, var_map} = acc,
+         depth
+       ) when is_list(t) do
+        case var_map do
+          %{^t => var} ->
+            {var, acc, depth}
+
+          %{} ->
+            {args_strings, {funs, params, consts, var_map} = acc} = Enum.reduce(
+            t,
+            {[], acc},
+            fn arg, {args_string, {funs, params, consts, var_map} = acc} ->
+              {arg_string, acc, _} = inspectt(arg, acc, depth)
+              {[arg_string | args_string], acc}
+            end
+            )
+
+            var = IO.iodata_to_binary(counter_to_name(map_size(var_map)))
+
+            {var,
+            {[{depth, var, :list, args_strings} | funs], params, consts, Map.put(var_map, t, var)},
+            depth}
+        end
+  end
+
+  defp inspectt(
+         t,
+         {funs, params, consts, var_map} = acc,
+         depth
+       ) when is_tuple(t) do
+      t
+      |> Tuple.to_list()
+      |> inspectt(acc, depth)
+  end
+
+  defp inspectt(
+         t,
+         {funs, params, consts, var_map} = acc,
+         depth
+       ) when is_integer(t) do
+      t
+      |> Nx.tensor()
+      |> inspectt(acc, depth)
+  end
+
+  defp inspectt(
          %T{data: %Expr{op: op, id: id, args: args}} = t,
          {funs, params, consts, var_map} = acc,
          depth
@@ -239,10 +287,23 @@ defmodule TorchScriptex do
         var = IO.iodata_to_binary(counter_to_name(map_size(var_map)))
 
         {var,
-         {[{depth, var, op, args_strings} | funs], params, consts, Map.put(var_map, id, var)},
+         {[{depth, var, op, args_strings, t} | funs], params, consts, Map.put(var_map, id, var)},
          depth}
     end
   end
+
+  defp inspectt(
+         nil,
+         acc,
+         depth
+       ) do
+        {"None", acc, depth}
+       end
+
+  # defp inspectt(t, acc, depth) do
+  #   IO.inspect(t)
+  #   raise "other error"
+  # end
 
   defp counter_to_name(counter) when counter >= 26 do
     [counter_to_name(div(counter, 26)) | counter_to_name(rem(counter, 26))]
