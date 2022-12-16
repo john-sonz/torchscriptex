@@ -12,7 +12,8 @@ defmodule TorchScriptex.Generator do
                 [:add, :subtract, :multiply, :divide]
 
   @name_exception_ops [:erf_inv, :is_nan, :is_infinity, :left_shift] ++
-                        [:negate, :power, :quotient, :right_shift]
+                        [:negate, :power, :quotient, :right_shift] ++
+                        [:concatenate]
 
   @name_exception_replacements %{
     erf_inv: "erfinv",
@@ -22,7 +23,8 @@ defmodule TorchScriptex.Generator do
     negate: "neg",
     power: "pow",
     quotient: "div",
-    right_shift: "bitwise_right_shift"
+    right_shift: "bitwise_right_shift",
+    concatenate: "cat"
   }
 
   def python(funs, params, consts) do
@@ -127,6 +129,14 @@ defmodule TorchScriptex.Generator do
     "torch.#{@name_exception_replacements[op]}(#{args_string(args)})"
   end
 
+  defp torch_op(op, args, _) when op in @opaque_ops do
+    "torch.#{op}(#{args_string(args)})"
+  end
+
+  defp torch_op(op, args, _) when op in @name_exception_ops do
+    "torch.#{@name_exception_replacements[op]}(#{args_string(args)})"
+  end
+
   defp torch_op(:elem, [arg, index]), do: "#{arg}[#{index}]"
 
   defp torch_op(:cbrt, [arg]), do: "torch.pow(#{arg}, 1.0/3)"
@@ -136,6 +146,11 @@ defmodule TorchScriptex.Generator do
   defp torch_op(:list, args), do: "[#{Enum.join(args, ",")}]"
 
   defp torch_op(:reshape, [arg], %T{shape: shape}), do: "torch.reshape(#{arg}, #{python_tuple(shape)})"
+
+  defp torch_op(:as_type, [arg], %T{type: type}), do: "#{arg}.type(#{python_type(type)})"
+
+  #undefined behaviour in torchscript, bitcast() unsupported
+  defp torch_op(:bitcast, [arg], %T{type: type}), do: "#{arg}.view(#{python_type(type)})"
 
   defp torch_op(op, args) do
     "#{op}(#{Enum.join(args,",")}) not supported"
@@ -149,7 +164,7 @@ defmodule TorchScriptex.Generator do
 
   # String helpers
 
-  defp args_string(args), do: Enum.join(args, ", ")
+  defp args_string(args), do: Enum.reverse(args) |> Enum.join(", ")
 
   defp indent(string, tabs \\ 1) do
     "#{String.duplicate("\t", tabs)}#{string}"
