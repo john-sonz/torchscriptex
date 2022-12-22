@@ -26,11 +26,6 @@ defmodule TorchScriptex do
       |> Nx.divide(4)
       |> Nx.cbrt()
 
-    {_, ret} =
-      while {i = 0, ret}, i < 5 do
-        {i + 2, ret + 1}
-      end
-
     (ret + a * Nx.tensor([2, 2]))
     |> Nx.negate()
   end
@@ -60,13 +55,11 @@ defmodule TorchScriptex do
   end
 
   deftransform inspectx2(tensor) do
-    #IO.inspect(tensor, structs: false, limit: :infinity)
     {_, {funs, params, consts, var_map}, _} = inspectt(tensor, {[], %{}, %{}, %{}}, 0)
 
     inv_var_map = Map.new(var_map, fn {key, val} -> {val, key} end)
-    IO.inspect(funs)
+    # IO.inspect(funs)
     code = TorchScriptex.Generator.python(funs, params, consts)
-
     IO.puts(code)
 
     tensor
@@ -221,47 +214,51 @@ defmodule TorchScriptex do
          t,
          {funs, params, consts, var_map} = acc,
          depth
-       ) when is_list(t) do
-        case var_map do
-          %{^t => var} ->
-            {var, acc, depth}
+       )
+       when is_list(t) do
+    case var_map do
+      %{^t => var} ->
+        {var, acc, depth}
 
-          %{} ->
-            {args_strings, {funs, params, consts, var_map} = acc} = Enum.reduce(
+      %{} ->
+        {args_strings, {funs, params, consts, var_map} = acc} =
+          Enum.reduce(
             t,
             {[], acc},
             fn arg, {args_string, {funs, params, consts, var_map} = acc} ->
               {arg_string, acc, _} = inspectt(arg, acc, depth)
               {[arg_string | args_string], acc}
             end
-            )
+          )
 
-            var = IO.iodata_to_binary(counter_to_name(map_size(var_map)))
+        var = IO.iodata_to_binary(counter_to_name(map_size(var_map)))
 
-            {var,
-            {[{depth, var, :list, args_strings} | funs], params, consts, Map.put(var_map, t, var)},
-            depth}
-        end
+        {var,
+         {[{depth, var, :list, args_strings} | funs], params, consts, Map.put(var_map, t, var)},
+         depth}
+    end
   end
 
   defp inspectt(
          t,
          {funs, params, consts, var_map} = acc,
          depth
-       ) when is_tuple(t) do
-      t
-      |> Tuple.to_list()
-      |> inspectt(acc, depth)
+       )
+       when is_tuple(t) do
+    t
+    |> Tuple.to_list()
+    |> inspectt(acc, depth)
   end
 
   defp inspectt(
          t,
          {funs, params, consts, var_map} = acc,
          depth
-       ) when is_integer(t) do
-      t
-      |> Nx.tensor()
-      |> inspectt(acc, depth)
+       )
+       when is_integer(t) do
+    t
+    |> Nx.tensor()
+    |> inspectt(acc, depth)
   end
 
   defp inspectt(
@@ -297,8 +294,8 @@ defmodule TorchScriptex do
          acc,
          depth
        ) do
-        {"None", acc, depth}
-       end
+    {"None", acc, depth}
+  end
 
   # defp inspectt(t, acc, depth) do
   #   IO.inspect(t)

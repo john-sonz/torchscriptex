@@ -32,17 +32,21 @@ defmodule TorchScriptex.Generator do
     consts = prepare_consts(consts)
     body = prepare_body(funs)
 
+    return_var = funs |> hd |> elem(1)
+
     [
       header,
       consts,
-      body
+      body,
+      indent("return #{return_var}")
     ]
     |> List.flatten()
     |> Enum.join("\n")
   end
 
   defp prepare_header(params) do
-    stringified_params = params |> Map.keys() |> Enum.sort() |> args_string()
+    stringified_params = params |> Map.keys() |> Enum.sort() |> Enum.join(", ")
+
     ["@torch.jit.script", "def forward(#{stringified_params}):"]
   end
 
@@ -139,27 +143,28 @@ defmodule TorchScriptex.Generator do
 
   defp torch_op(:elem, [arg, index]), do: "#{arg}[#{index}]"
 
-  defp torch_op(:cbrt, [arg]), do: "torch.pow(#{arg}, 1.0/3)"
+  defp torch_op(:cbrt, [arg], _), do: "torch.pow(#{arg}, 1.0/3)"
 
   defp torch_op(:conjugate, [arg]), do: "torch.conj(#{arg}).resolve_conj()"
 
   defp torch_op(:list, args), do: "[#{Enum.join(args, ",")}]"
 
-  defp torch_op(:reshape, [arg], %T{shape: shape}), do: "torch.reshape(#{arg}, #{python_tuple(shape)})"
+  defp torch_op(:reshape, [arg], %T{shape: shape}),
+    do: "torch.reshape(#{arg}, #{python_tuple(shape)})"
 
   defp torch_op(:as_type, [arg], %T{type: type}), do: "#{arg}.type(#{python_type(type)})"
 
-  #undefined behaviour in torchscript, bitcast() unsupported
+  # undefined behaviour in torchscript, bitcast() unsupported
   defp torch_op(:bitcast, [arg], %T{type: type}), do: "#{arg}.view(#{python_type(type)})"
 
   defp torch_op(op, args) do
-    "#{op}(#{Enum.join(args,",")}) not supported"
-    #raise(ArgumentError, "#{op} Nx operation is unsupported for generating TorchScript code")
+    "#{op}(#{Enum.join(args, ",")}) not supported"
+    # raise(ArgumentError, "#{op} Nx operation is unsupported for generating TorchScript code")
   end
 
   defp torch_op(op, args, out) do
-    "#{op}(#{Enum.join(args,",")}) not supported"
-    #raise(ArgumentError, "#{op} Nx operation is unsupported for generating TorchScript code")
+    "#{op}(#{Enum.join(args, ",")}) not supported"
+    # raise(ArgumentError, "#{op} Nx operation is unsupported for generating TorchScript code")
   end
 
   # String helpers
