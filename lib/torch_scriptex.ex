@@ -16,6 +16,19 @@ defmodule TorchScriptex do
     )
   end
 
+  defn foo(t, p, r) do
+    a = p ||| r
+
+    ret =
+      Nx.add(t, p)
+      |> Nx.subtract(r)
+      |> Nx.multiply(2)
+      |> Nx.divide(4)
+      |> Nx.add(a * Nx.tensor([2, 2]))
+      |> Nx.negate
+
+    end
+
   defn test_defn(t, p, r) do
     a = p ||| r
 
@@ -24,15 +37,19 @@ defmodule TorchScriptex do
       |> Nx.subtract(r)
       |> Nx.multiply(2)
       |> Nx.divide(4)
-      |> Nx.cbrt()
+      |> Nx.add(a * Nx.tensor([[1, 2, 3], [4, 5, 6]]))
+      |> Nx.negate
+      |> Nx.pad(0, [{0, 1, 0}, {0, 1, 0}])
+      #|> print_value()
+      |> Nx.slice([0, 0], [3, 2], strides: [2, 1])
 
-    {_, ret} =
-      while {i = 0, ret}, i < 5 do
-        {i + 2, ret + 1}
-      end
+    # {_, ret} =
+    #   while {i = 0, ret}, i < 5 do
+    #     {i + 2, ret + 1}
+    #   end
 
-    (ret + a * Nx.tensor([2, 2]))
-    |> Nx.negate()
+    # (ret + a * Nx.tensor([2, 2]))
+    # |> Nx.negate()
   end
 
   defn slice_test() do
@@ -56,15 +73,15 @@ defmodule TorchScriptex do
   end
 
   def test do
-    TorchScriptex.inspect_torch({16, 2, 3}, fn {a, b, c} -> test_defn(a, b, c) end)
+    TorchScriptex.inspect_torch({16, 2, 3}, fn {a, b, c} -> foo(a, b, c) end)
   end
 
   deftransform inspectx2(tensor) do
-    #IO.inspect(tensor, structs: false, limit: :infinity)
     {_, {funs, params, consts, var_map}, _} = inspectt(tensor, {[], %{}, %{}, %{}}, 0)
 
+    IO.inspect(var_map)
+
     inv_var_map = Map.new(var_map, fn {key, val} -> {val, key} end)
-    IO.inspect(funs)
     code = TorchScriptex.Generator.python(funs, params, consts)
 
     IO.puts(code)
@@ -133,7 +150,7 @@ defmodule TorchScriptex do
 
       %{} ->
         var = IO.iodata_to_binary(counter_to_name(map_size(var_map)))
-        {var, {funs, params, consts, Map.put(var_map, id, var)}, 0}
+        {var, {funs, params, Map.put(consts, var, num), Map.put(var_map, id, var)}, 0}
     end
   end
 
@@ -197,15 +214,38 @@ defmodule TorchScriptex do
 
         {condition_string, acc, _} = inspectt(condition, acc, depth + 1)
 
-        {out_strings, {funs, params, consts, var_map} = acc} =
+        {out_strings, ma_states, ma_values, {funs, params, consts, var_map} = acc} =
           Enum.reduce(
+            Enum.zip(
             output |> Tuple.to_list(),
-            {[], acc},
-            fn arg, {args_string, acc} ->
+            state |> Tuple.to_list()
+            ),
+            {[], [], [], acc},
+            fn {arg, state_var}, {args_string, states, values, acc} ->
               {arg_string, acc, _} = inspectt(arg, acc, depth + 1)
-              {[arg_string | args_string], acc}
+              {next_state, acc, _} = inspectt(state_var, acc, depth + 1)
+              {[arg_string | args_string], [next_state | states], [arg_string | values], acc}
             end
           )
+
+        acc = {
+            [{depth+1, var, :assign, Enum.reverse(ma_values)} |
+            [{depth+1, Enum.join(ma_states, ","), :multiple_assign, ma_values}
+             | funs]],
+            params,
+            consts,
+            var_map
+          }
+
+
+        # [{_, out, _, _, _} | tail] = funs
+
+        # acc = {
+        #   [{depth+1, var, :assign, [out]} | funs],
+        #   params,
+        #   consts,
+        #   var_map
+        # }
 
         # {var, {
         #   [{depth, var, :while, [init_strings, state_strings, condition_string, out_strings]} | funs],
